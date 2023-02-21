@@ -14,7 +14,7 @@ def _tag_task(idx, task, params, queue):
 class MultiProcessPool:
     def __init__(self, num_procs=4):
         cpu_count = multiprocessing.cpu_count()
-        num_procs = num_procs if num_procs < cpu_count*0.8 else cpu_count*0.8
+        num_procs = num_procs if num_procs < cpu_count else cpu_count
         self.num_procs = int(num_procs)
         self.task_pool = multiprocessing.Pool(processes=self.num_procs)
         self.queue = {}
@@ -43,13 +43,16 @@ class MultiProcessPool:
                 while r is not None:
                     results.append(r)
                     r = q.get_nowait()
+
+                # results = list(q.get_nowait() for _ in iter(int, 1))
+                # return results
             except Empty:
                 if len(results) > 0:
                     return tuple_sort(results)
                 else:
                     return []
         else:
-            return None
+            return []
 
     def cleanup(self):
         self.queue.clear()
