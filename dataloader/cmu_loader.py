@@ -37,6 +37,87 @@ def hierarchy2adj(hierarchy):
     return adj
 
 
+"""convert amc motion frame into coordinate"""
+def frame2pos(frame, hierarchy):
+    pos_root = np.zeros((3, 1), dtype=np.float32)
+    rmat_list = np.zeros((len(hierarchy.joints.keys()), 3, 3))
+    offset_list = np.zeros((len(hierarchy.joints.keys()), 1, 3))
+    idx_rec = []
+    for jname in frame.keys():
+        joint = hierarchy.joints[jname]
+        jpos = frame[jname]
+        axis = joint.axis
+        if jname == 'root':
+            pos_root = jpos[:3]
+            deg = jpos[3:]
+        else:
+            deg = [0, 0, 0]
+            cnt = 0
+            for i, d in enumerate(joint.dof):
+                if d > 0:
+                    deg[i] = jpos[cnt]
+                    cnt += 1
+
+        deg = np.deg2rad(deg)  # np.array([deg])*math.pi/180
+
+        jidx = hierarchy.joint_idx[jname]
+        idx_rec.append(jidx)
+
+        # rmat = rotate_matrix(deg[2], deg[0], deg[1])
+        rmat = transforms3d.euler.euler2mat(*deg)
+
+        # amat = rotate_matrix(axis[2], axis[0], axis[1])
+        amat = joint.rmat
+        amat_inv = joint.rmat_inv
+
+        # ref: https://research.cs.wisc.edu/graphics/Courses/cs-838-1999/Jeff/ASF-AMC.html
+        rmat = amat.dot(rmat).dot(amat_inv)
+
+        rmat_list[jidx, :, :] = rmat
+
+        direction = np.array([joint.direction])
+        offset = joint.length*direction
+        offset_list[jidx, :, :] = offset
+
+    # fill unrecorded joints
+    for i in range(hierarchy.joints.keys().__len__()):
+        if i not in idx_rec:
+            rmat_list[i, :, :] = np.eye(3, dtype=np.float32)
+
+            jname = None
+            for name in hierarchy.joint_idx.keys():
+                if hierarchy.joint_idx[name] == i:
+                    jname = name
+                    break
+            joint = hierarchy.joints[jname]
+            direction = np.array([joint.direction])
+            offset_list[i, :, :] = joint.length * direction
+
+    pos = []
+    for i, jname in enumerate(hierarchy.joints.keys()):
+        rmat_parent = np.eye(3, dtype=np.float32)
+        if jname == 'root':
+            pos.append(np.transpose([pos_root]))
+        else:
+            calc_order = hierarchy.calc_order[jname]
+            p = np.transpose([[0, 0, 0]])
+            rmat_parent = rmat_list[calc_order[-1], :, :]
+            offset = np.transpose(offset_list[calc_order[-1], :, :])
+            p = np.transpose([pos_root]) + rmat_parent @ offset
+            for idx in calc_order[::-1]:
+                if idx == calc_order[-1]:
+                    continue
+                rmat = rmat_list[idx, :, :]
+                offset = np.transpose(offset_list[idx])
+
+                p = p + rmat_parent @ rmat @ offset
+                rmat_parent = rmat_parent @ rmat
+            pos.append(p)
+
+    pos = np.array(pos)
+    return pos
+
+
 def parse_asf(file_path, cache_path, enable_cache):
     with open(file_path) as f:
         content = f.read().splitlines()
@@ -165,7 +246,7 @@ def parse_asf(file_path, cache_path, enable_cache):
         return hierarchy
 
 
-def parse_amc(file_path, cache_path=None, enable_cache=False):
+def parse_amc(file_path, hierarchy, cache_path=None, enable_cache=False):
     with open(file_path) as f:
         content = f.read().splitlines()
         is_data = False
@@ -193,11 +274,17 @@ def parse_amc(file_path, cache_path=None, enable_cache=False):
                         continue
                     else:
                         degrees[data[0]] = [float(deg) for deg in data[1:]]
+
+        pos_frames = []
+        for frame in frames:
+            pos = frame2pos(frame[1], hierarchy)
+            pos_frames.append(pos)
+
         if enable_cache and cache_path:
             with open(cache_path, 'wb') as f:
-                pickle.dump(frames, f)
+                pickle.dump((frames, pos_frames), f)
         print("parsed", file_path)
-        return frames
+        return frames, pos_frames
 
 
 def load_amc_cache(cache_file_path):
@@ -284,49 +371,49 @@ class CmuLoader:
         cnt_max = 100
         meta = self.load_meta()
 
+        for i, fname in enumerate(meta.asf_names):
+            cache_path = os.path.join(self.cache_dir, fname+DEFAULT_HIERARCHY_CACHE_SUFFIX) if self.cache_dir else None
+            source_path = meta.asf_source_paths[i]
+            if not cache_path or not os.path.exists(cache_path):
+                self.task_pool.submit(tag='asf',
+                                      task=parse_asf,
+                                      params=(source_path, cache_path, self.enable_cache))
+            else:
+                self.task_pool.submit(tag='asf',
+                                      task=load_asf_cache,
+                                      params=(cache_path,))
+        # wait for all tasks to finish
+        self.task_pool.subscribe()
+        hierarchies = self.task_pool.fetch_results('asf')
+        self.task_pool.cleanup()
+
         for amc_name in meta.amc_names:
-            cnt +=1
-            if cnt > cnt_max:
-                break
-            data_cache_path = os.path.join(self.cache_dir, amc_name + DEFAULT_DATA_CACHE_SUFFIX)
+            # cnt +=1
+            # if cnt > cnt_max:
+            #     break
+            data_cache_path = os.path.join(self.cache_dir, amc_name + DEFAULT_DATA_CACHE_SUFFIX) if self.cache_dir else None
             data_source_path = meta.mapping[amc_name][1]
-            if not os.path.exists(data_cache_path):
+            hierarchy = list(filter(lambda x: x.name==meta.mapping[amc_name][2], hierarchies))[0]
+            if not data_cache_path or not os.path.exists(data_cache_path):
                 self.task_pool.submit(tag='amc',
                                       task=parse_amc,
-                                      params=(data_source_path, data_cache_path, self.enable_cache))
+                                      params=(data_source_path, hierarchy, data_cache_path, self.enable_cache))
             else:
                 self.task_pool.submit(tag='amc',
                                       task=load_amc_cache,
                                       params=(data_cache_path,))
 
-        for i, fname in enumerate(meta.asf_names):
-            cnt += 1
-            if cnt > cnt_max:
-                break
-            cache_path = os.path.join(self.cache_dir, fname+DEFAULT_HIERARCHY_CACHE_SUFFIX)
-            source_path = meta.asf_source_paths[i]
-            if not os.path.exists(cache_path):
-                self.task_pool.submit(tag='asf',
-                                 task=parse_asf,
-                                 params=(source_path, cache_path, self.enable_cache))
-            else:
-                self.task_pool.submit(tag='asf',
-                                 task=load_asf_cache,
-                                 params=(cache_path,))
-
-        # wait for all tasks to finish
-        self.task_pool.subscribe()
         # fetch results
         tic = time.time()
-        data_raw = self.task_pool.fetch_results('amc')
-        hierarchies = self.task_pool.fetch_results('asf')
+        # wait for all tasks to finish
+        self.task_pool.subscribe()
+        frames = self.task_pool.fetch_results('amc')
+        self.task_pool.cleanup()
         tac = time.time()
         print("fetching results takes", tac-tic, "seconds")
 
-        self.task_pool.cleanup()
-
         # return raw data and hierarchy info
-        return data_raw, hierarchies
+        return frames, hierarchies
 
     def load(self, amc_name, meta):
         amc_path = meta.mapping[amc_name][1]
@@ -336,22 +423,24 @@ class CmuLoader:
         data_raw = None
         hierarchy = None
         if self.cache_dir:
-            amc_cache_path = os.path.join(self.cache_dir, amc_name + DEFAULT_DATA_CACHE_SUFFIX)
-            if not os.path.exists(amc_cache_path):
-                data_raw = parse_amc(amc_path, amc_cache_path, self.enable_cache)
-            else:
-                data_raw = load_amc_cache(amc_cache_path)
 
             asf_cache_path = os.path.join(self.cache_dir, asf_name + DEFAULT_HIERARCHY_CACHE_SUFFIX)
             if not os.path.exists(asf_cache_path):
                 hierarchy = parse_asf(asf_path, asf_cache_path, self.enable_cache)
             else:
                 hierarchy = load_asf_cache(asf_cache_path)
-        else:
-            data_raw = parse_amc(amc_path, None, False)
-            hierarchy = parse_asf(asf_path, None, False)
 
-        return data_raw, hierarchy
+            amc_cache_path = os.path.join(self.cache_dir, amc_name + DEFAULT_DATA_CACHE_SUFFIX)
+            if not os.path.exists(amc_cache_path):
+                frames, pos_frames = parse_amc(amc_path, hierarchy, amc_cache_path, self.enable_cache)
+            else:
+                frames, pos_frames = load_amc_cache(amc_cache_path)
+
+        else:
+            hierarchy = parse_asf(asf_path, None, False)
+            frames, pos_frames = parse_amc(amc_path, hierarchy, None, False)
+
+        return frames, pos_frames, hierarchy
 
 
 class CmuJoint:
@@ -413,8 +502,9 @@ class CmuMeta:
 
 
 class CmuHierarchy:
-    def __init__(self, name, joints, joint_idx, hierarchy, hierarchy_mat):
-        self.name = name
+    def __init__(self, source_path, joints, joint_idx, hierarchy, hierarchy_mat):
+        self.source_path = source_path
+        self.name = os.path.basename(source_path).split('.')[0]
         self.joints = joints
         self.joint_idx = joint_idx
 

@@ -56,3 +56,4 @@ class MultiProcessPool:
 
     def cleanup(self):
         self.queue.clear()
+        self.task_pool = multiprocessing.Pool(processes=self.num_procs)

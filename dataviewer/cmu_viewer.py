@@ -106,6 +106,40 @@ def draw_frame(axes, frame, hierarchy):
     plt.show()
 
 
+def draw_pos_frame(axes, pos, hierarchy):
+    # draw bone segments
+    for jname in hierarchy.hierarchy.keys():
+        parent_jname = hierarchy.hierarchy[jname]
+        idx_j = hierarchy.joint_idx[jname]
+        idx_p = hierarchy.joint_idx[parent_jname]
+        axes.plot([pos[idx_j][0], pos[idx_p][0]],
+                  [pos[idx_j][1], pos[idx_p][1]],
+                  [pos[idx_j][2], pos[idx_p][2]],
+                  'g', linewidth=1)
+
+    # draw joints
+    axes.scatter(pos[:, 0], pos[:, 1], pos[:, 2], c='r', marker='o', s=20)
+
+
+def draw_pos_motion(pos_frames, hierarchy):
+    plt.ion()
+    axes = plt.axes(projection='3d')
+    for pos in pos_frames:
+        axes.clear()
+        axes.set_xlabel('x')
+        axes.set_ylabel('y')
+        axes.set_zlabel('z')
+        axes.set_aspect('equal', adjustable='box')
+        axes.set_zlim(-50, 50)
+        axes.set_ylim(-10, 40)
+        axes.set_xlim(-50, 50)
+        axes.view_init(elev=144, azim=-83)
+
+        draw_pos_frame(axes, pos, hierarchy)
+        plt.pause(0.01)
+        plt.show()
+
+
 def draw_motion(data_raw, hierarchy):
     plt.ion()
     axes = plt.axes(projection='3d')
