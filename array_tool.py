@@ -51,6 +51,7 @@ def kfold(n_sample, n_split=5, shuffle=False):
 
         yield idx_train, idx_val
 
+# balanced data split per classes using sample-and-reject method
 def data_split_balance(labels, num_classes, ratio=[5,1], shuffle=False):
     n_sample = len(labels)
     label_index = [idx for idx in range(n_sample)]

@@ -8,6 +8,7 @@ import transforms3d
 from geometry_tools import rotate_matrix
 
 
+"""draw raw frame by converting to position"""
 def draw_frame(axes, frame, hierarchy):
     pos_root = np.zeros((3, 1), dtype=np.float32)
     rmat_list = np.zeros((len(hierarchy.joints.keys()), 3, 3))
@@ -121,6 +122,7 @@ def draw_pos_frame(axes, pos, hierarchy):
     axes.scatter(pos[:, 0], pos[:, 1], pos[:, 2], c='r', marker='o', s=20)
 
 
+# draw motion by joint positions
 def draw_pos_motion(pos_frames, hierarchy):
     plt.ion()
     axes = plt.axes(projection='3d')
@@ -140,6 +142,7 @@ def draw_pos_motion(pos_frames, hierarchy):
         plt.show()
 
 
+# draw motion from raw data (in degrees), loaded and converted into positions
 def draw_motion(data_raw, hierarchy):
     plt.ion()
     axes = plt.axes(projection='3d')
@@ -155,6 +158,8 @@ def draw_motion(data_raw, hierarchy):
         axes.set_ylim(-10, 40)
         axes.set_xlim(-50, 50)
         axes.view_init(elev=144, azim=-83)
+
+        # draw each frame
         draw_frame(axes, frame[1], hierarchy)
         plt.pause(0.01)
 

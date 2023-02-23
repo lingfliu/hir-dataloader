@@ -322,8 +322,17 @@ class CmuLoader:
 
 
 
+    """function to renew frame length info in meta"""
+    def renew_meta(self, meta):
+        if self.enable_cache and self.cache_dir:
+            meta_file_path = os.path.join(self.cache_dir, DEFAULT_META_FILE)
+            if os.path.exists(meta_file_path):
+                with open(meta_file_path, 'wb') as f:
+                    pickle.dump(meta, f)
+                return meta
+
     def load_meta(self):
-        if self.enable_cache:
+        if self.enable_cache and self.cache_dir:
             meta_file_path = os.path.join(self.cache_dir, DEFAULT_META_FILE)
             if os.path.exists(meta_file_path):
                 with open(meta_file_path, 'rb') as f:
@@ -368,7 +377,7 @@ class CmuLoader:
 
         # todo: remove cnt in release
         cnt = 0
-        cnt_max = 100
+        cnt_max = 20
         meta = self.load_meta()
 
         for i, fname in enumerate(meta.asf_names):
@@ -388,9 +397,9 @@ class CmuLoader:
         self.task_pool.cleanup()
 
         for amc_name in meta.amc_names:
-            # cnt +=1
-            # if cnt > cnt_max:
-            #     break
+            cnt +=1
+            if cnt > cnt_max:
+                break
             data_cache_path = os.path.join(self.cache_dir, amc_name + DEFAULT_DATA_CACHE_SUFFIX) if self.cache_dir else None
             data_source_path = meta.mapping[amc_name][1]
             hierarchy = list(filter(lambda x: x.name==meta.mapping[amc_name][2], hierarchies))[0]
@@ -407,13 +416,26 @@ class CmuLoader:
         tic = time.time()
         # wait for all tasks to finish
         self.task_pool.subscribe()
-        frames = self.task_pool.fetch_results('amc')
+        data_list = self.task_pool.fetch_results('amc')
         self.task_pool.cleanup()
         tac = time.time()
         print("fetching results takes", tac-tic, "seconds")
+        print("total data size:", len(data_list))
+        print(data_list[0])
 
-        # return raw data and hierarchy info
-        return frames, hierarchies
+        # fill amc length infos in meta if not exist
+        if len(meta.amc_lengths) < 1:
+            for i, amc_name in enumerate(meta.amc_names):
+                print(i)
+                if i >= cnt_max:
+                    break
+                frames, pos_frames = data_list[i]
+                meta.amc_lengths.append(len(frames[i]))
+            self.renew_meta(meta)
+
+        # split data into frames lists
+        frames_list, pos_frames_list = zip(*data_list)
+        return frames_list, pos_frames_list, hierarchies, meta
 
     def load(self, amc_name, meta):
         amc_path = meta.mapping[amc_name][1]
@@ -467,6 +489,8 @@ class CmuJoint:
         # self.rmat = rotate_matrix(deg[2], deg[0], deg[1])
         self.rmat_inv = np.linalg.inv(self.rmat)
 
+
+#todo 生成cmu的语义标签
 class CmuLabel:
     def __init__(self, labels):
         self.labels = labels
@@ -496,6 +520,8 @@ class CmuMeta:
             self.asf_names = [os.path.basename(path) for path in asf_source_paths].split('.')[0]
         else:
             self.asf_names = []
+
+        self.amc_lengths = []
 
     def find_hierarchy(self, data_name):
         return self.path_mapping[data_name]

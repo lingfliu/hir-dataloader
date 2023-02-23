@@ -19,3 +19,6 @@ print(c.shape)
 print(a)
 print(b)
 print(c)
+
+l = []
+l.append((np.arra))
